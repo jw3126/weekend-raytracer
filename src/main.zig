@@ -3,18 +3,28 @@ const Allocator = std.mem.Allocator;
 const svecs = @import("svectors.zig");
 const SVec = svecs.SVec;
 
-const RGB = struct { r: f32, g: f32, b: f32 };
+const RGB = struct {
+    const Self = @This();
+    r: f32,
+    g: f32,
+    b: f32,
+    const green = Self{ .r = 0, .g = 1, .b = 0 };
+    const blue = Self{ .r = 0, .g = 0, .b = 1 };
+    const red = Self{ .r = 1, .g = 0, .b = 0 };
+};
 
 const Image = struct {
     const Self = @This();
-    width: u32,
-    height: u32,
+    width: usize,
+    height: usize,
     pixelValues: []RGB, // SOA?
     alloc: Allocator,
 
-    pub fn initFill(alloc: Allocator, color: RGB, width: u32, height: u32) Self {
-        _ = color;
-        var pixelValues = try alloc.alloc(f32, width * height);
+    pub fn initFill(alloc: Allocator, color: RGB, width: usize, height: usize) !Self {
+        var pixelValues = try alloc.alloc(RGB, width * height);
+        for (pixelValues) |*p| {
+            p.* = color;
+        }
         return Self{
             .width = width,
             .height = height,
@@ -23,17 +33,17 @@ const Image = struct {
         };
     }
 
-    pub fn at(self: Self, x: u32, y: u32) RGB {
+    pub fn at(self: Self, x: usize, y: usize) *RGB {
         const i = self.toLinearIndex(x, y);
-        return self.pixelValues[i];
+        return &self.pixelValues[i];
     }
 
-    pub fn setAt(self: *Self, x: u32, y: u32, color: RGB) void {
+    pub fn setAt(self: *Self, x: usize, y: usize, color: RGB) void {
         const i = self.toLinearIndex(x, y);
         self.pixelValues[i] = color;
     }
 
-    fn toLinearIndex(self: Self, x: u32, y: u32) u32 {
+    fn toLinearIndex(self: Self, x: usize, y: usize) usize {
         return y * self.width + x;
     }
 
@@ -41,28 +51,38 @@ const Image = struct {
         self.alloc.free(self.pixelValues);
     }
 
-    pub fn savePPM(path: []const u8, self: Self) !void {
+    pub fn savePPM(self: Self, path: []const u8) !void {
         const file = try std.fs.cwd().createFile(path, .{});
         defer file.close();
-        try file.writeAll("P3\n");
-        try file.writeAll(&[_]u8{ self.width, ' ', self.height });
+        const writer = file.writer();
+        try writer.print("P3\n", .{});
+        try writer.print("{d} {d}\n", .{ self.width, self.height });
+        try writer.print("255\n", .{}); // max color, do we want to adjust?
+        for (0..self.height) |iy| {
+            for (0..self.width) |ix| {
+                const color = self.at(ix, iy);
+                const r: u8 = @intFromFloat(std.math.round(color.r * 255));
+                const g: u8 = @intFromFloat(std.math.round(color.g * 255));
+                const b: u8 = @intFromFloat(std.math.round(color.b * 255));
+                try writer.print("{d} {d} {d}\n", .{ r, g, b });
+            }
+        }
     }
 };
 
 pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
-
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
-
-    try stdout.print("Run `zig build test` to run the tests.\n", .{});
-
-    try bw.flush(); // don't forget to flush!
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const alloc = gpa.allocator();
+    const img = try Image.initFill(alloc, RGB.blue, 256, 256);
+    for (0..img.height) |y| {
+        for (0..img.width) |x| {
+            const fx: f32 = @floatFromInt(x);
+            const fy: f32 = @floatFromInt(y);
+            const fz: f32 = @floatFromInt(try std.math.mod(usize, x * y, 255));
+            img.at(x, y).* = RGB{ .r = fx / 255, .g = fy / 255, .b = fz / 255 };
+        }
+    }
+    try img.savePPM("test.ppm");
 }
 
 test {
