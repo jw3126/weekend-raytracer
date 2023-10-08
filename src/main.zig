@@ -1,7 +1,123 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const svecs = @import("svectors.zig");
-const SVec = svecs.SVec;
+const Vec = svecs.Vec(3, f32);
+
+const Ray = struct {
+    origin: Vec,
+    velocity: Vec,
+
+    pub fn at(self: Ray, t: f32) Vec {
+        return self.origin.add(self.velocity.scale(t));
+    }
+};
+
+pub fn abc_formula(a: f32, b: f32, c: f32) ?[2]f32 {
+    if (a == 0) {
+        // should we return a single solution?
+        // should we error?
+        return null;
+    }
+    const disc2 = b * b - 4 * a * c;
+    if (disc2 < 0) {
+        return null;
+    }
+    const disc = @sqrt(disc2);
+    const sol1 = (-b - disc) / (2 * a);
+    const sol2 = (-b + disc) / (2 * a);
+    if (a > 0) {
+        return .{ sol1, sol2 };
+    } else {
+        return .{ sol2, sol1 };
+    }
+}
+
+test "abc forumla" {
+    const expectEqual = std.testing.expectEqual;
+    try expectEqual(abc_formula(1, 0, 0), .{ 0, 0 });
+    try expectEqual(abc_formula(0, 1, -1), null);
+    try expectEqual(abc_formula(1, 0, 1), null);
+    try expectEqual(abc_formula(1, 0, -1), .{ -1, 1 });
+    try expectEqual(abc_formula(1, 0, -1), .{ -1, 1 });
+    try expectEqual(abc_formula(1, -3, 2), .{ 1, 2 });
+    try expectEqual(abc_formula(2, -6, 4), .{ 1, 2 });
+    try expectEqual(abc_formula(-1, 3, -2), .{ 1, 2 });
+}
+
+const Interval = struct {
+    const Self = @This();
+    start: f32,
+    stop: f32,
+    pub fn contains(self: Self, x: f32) bool {
+        return x >= self.start and x <= self.stop;
+    }
+};
+
+const Sphere = struct {
+    center: Vec,
+    radius: f32,
+    color: RGB,
+
+    pub fn hit(self: Sphere, ray: Ray, ts: Interval) ?HitRecord {
+        const oc = ray.origin.subtract(self.center);
+        const v = ray.velocity;
+        const a = v.abs2();
+        const b = 2 * oc.inner(v);
+        const c = oc.inner(oc) - self.radius * self.radius;
+        const res = abc_formula(a, b, c);
+        if (res == null) {
+            return null;
+        }
+        const t1 = res.?[0];
+        const t2 = res.?[0];
+        var t = std.math.nan(f32);
+        if (ts.contains(t1)) {
+            t = t1;
+        } else if (ts.contains(t2)) {
+            t = t2;
+        } else {
+            return null;
+        }
+        const point = ray.at(t);
+        const normal = point.subtract(self.center).scale(1 / self.radius);
+        return HitRecord{
+            .t = t,
+            .point = point,
+            .normal = normal,
+        };
+    }
+};
+
+test "Sphere" {
+    const expectEqual = std.testing.expectEqual;
+    const expect = std.testing.expect;
+    const expectEqualDeep = std.testing.expectEqualDeep;
+    const sphere = Sphere{
+        .center = Vec.fromArray(.{ 0, 0, 0 }),
+        .radius = 1,
+        .color = RGB.red,
+    };
+    const ray = Ray{
+        .origin = Vec.fromArray(.{ 0, 0, 10 }),
+        .velocity = Vec.fromArray(.{ 0, 0, -1 }),
+    };
+    const res = sphere.hit(ray, Interval{ .start = 0, .stop = 10 });
+    try expect(res != null);
+    const hit = res.?;
+    try expectEqual(hit.t, 9);
+    try expectEqualDeep(hit, HitRecord{
+        .t = 9,
+        .point = Vec.fromArray(.{ 0, 0, 1 }),
+        .normal = Vec.fromArray(.{ 0, 0, 1 }),
+    });
+}
+
+const HitRecord = struct {
+    t: f32,
+    point: Vec,
+    normal: Vec, // assume normalized
+    // material: *const Sphere,
+};
 
 const RGB = struct {
     const Self = @This();
@@ -11,6 +127,8 @@ const RGB = struct {
     const green = Self{ .r = 0, .g = 1, .b = 0 };
     const blue = Self{ .r = 0, .g = 0, .b = 1 };
     const red = Self{ .r = 1, .g = 0, .b = 0 };
+    const black = Self{ .r = 0, .g = 0, .b = 0 };
+    const white = Self{ .r = 1, .g = 1, .b = 1 };
 };
 
 const Image = struct {
@@ -73,7 +191,7 @@ const Image = struct {
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const alloc = gpa.allocator();
-    const img = try Image.initFill(alloc, RGB.blue, 256, 256);
+    const img = try Image.initFill(alloc, RGB.white, 256, 256);
     for (0..img.height) |y| {
         for (0..img.width) |x| {
             const fx: f32 = @floatFromInt(x);

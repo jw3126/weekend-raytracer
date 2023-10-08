@@ -144,7 +144,7 @@ pub fn Vec(comptime len: comptime_int, comptime T: type) type {
 
         pub fn cross(self: Self, other: Self) Self {
             comptime if (len != 3) {
-                @compileError("cross requires 3D vectors");
+                @compileError("cross product requires 3D vectors");
             };
             return Self{
                 .data = [3]T{
@@ -157,7 +157,7 @@ pub fn Vec(comptime len: comptime_int, comptime T: type) type {
     };
 }
 
-test "SVec" {
+test "Vec" {
     const x = Vec(3, f32).fill(1.0);
     const expect = std.testing.expect;
     const expectEqual = std.testing.expectEqual;
@@ -193,7 +193,10 @@ test "SVec" {
     try expectEqual(a.at(0), 1.0);
     try expectEqual(a.at(1), 2.0);
     try expectEqual(a.at(2), 3.0);
+}
 
+test "cross" {
+    const expectEqualDeep = std.testing.expectEqualDeep;
     const e0 = Vec(3, u8).unitvector(0);
     const e1 = Vec(3, u8).unitvector(1);
     const e2 = Vec(3, u8).unitvector(2);
