@@ -21,6 +21,17 @@ pub fn Vec(comptime len: comptime_int, comptime T: type) type {
             return ret;
         }
 
+        pub fn fromXYZ(x: T, y: T, z: T) Self {
+            comptime if (len != 3) {
+                @compileError("fromXYZ requires 3D vectors");
+            };
+            var ret = Self.undef();
+            ret.data[0] = x;
+            ret.data[1] = y;
+            ret.data[2] = z;
+            return ret;
+        }
+
         pub fn fill(value: T) Self {
             var ret = Self.undef();
             @memset(&ret.data, value);

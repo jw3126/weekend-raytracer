@@ -49,7 +49,7 @@ const Interval = struct {
     start: f32,
     stop: f32,
     pub fn contains(self: Self, x: f32) bool {
-        return x >= self.start and x <= self.stop;
+        return (self.start <= x) and (x <= self.stop);
     }
 };
 
@@ -69,7 +69,7 @@ const Sphere = struct {
             return null;
         }
         const t1 = res.?[0];
-        const t2 = res.?[0];
+        const t2 = res.?[1];
         var t = std.math.nan(f32);
         if (ts.contains(t1)) {
             t = t1;
@@ -84,6 +84,7 @@ const Sphere = struct {
             .t = t,
             .point = point,
             .normal = normal,
+            .color = self.color,
         };
     }
 };
@@ -92,30 +93,52 @@ test "Sphere" {
     const expectEqual = std.testing.expectEqual;
     const expect = std.testing.expect;
     const expectEqualDeep = std.testing.expectEqualDeep;
-    const sphere = Sphere{
-        .center = Vec.fromArray(.{ 0, 0, 0 }),
-        .radius = 1,
-        .color = RGB.red,
-    };
-    const ray = Ray{
-        .origin = Vec.fromArray(.{ 0, 0, 10 }),
-        .velocity = Vec.fromArray(.{ 0, 0, -1 }),
-    };
-    const res = sphere.hit(ray, Interval{ .start = 0, .stop = 10 });
-    try expect(res != null);
-    const hit = res.?;
-    try expectEqual(hit.t, 9);
-    try expectEqualDeep(hit, HitRecord{
-        .t = 9,
-        .point = Vec.fromArray(.{ 0, 0, 1 }),
-        .normal = Vec.fromArray(.{ 0, 0, 1 }),
-    });
+    {
+        const sphere = Sphere{
+            .center = Vec.fromXYZ(0, 0, 0),
+            .radius = 50,
+            .color = RGB.blue,
+        };
+
+        const ray = Ray{ .origin = Vec.fromXYZ(0, 0, 10), .velocity = Vec.fromXYZ(0, 0, -5) };
+        const res = sphere.hit(ray, Interval{ .start = 0, .stop = std.math.inf(f32) });
+        try expect(res != null);
+        const hit = res.?;
+        try expectEqualDeep(hit, HitRecord{
+            .t = 12,
+            .point = Vec.fromXYZ(0, 0, -50),
+            .normal = Vec.fromXYZ(0, 0, -1),
+            .color = RGB.blue,
+        });
+    }
+    {
+        const sphere = Sphere{
+            .center = Vec.fromArray(.{ 0, 0, 0 }),
+            .radius = 1,
+            .color = RGB.red,
+        };
+        const ray = Ray{
+            .origin = Vec.fromArray(.{ 0, 0, 10 }),
+            .velocity = Vec.fromArray(.{ 0, 0, -1 }),
+        };
+        const res = sphere.hit(ray, Interval{ .start = 0, .stop = 10 });
+        try expect(res != null);
+        const hit = res.?;
+        try expectEqual(hit.t, 9);
+        try expectEqualDeep(hit, HitRecord{
+            .t = 9,
+            .point = Vec.fromArray(.{ 0, 0, 1 }),
+            .normal = Vec.fromArray(.{ 0, 0, 1 }),
+            .color = RGB.red,
+        });
+    }
 }
 
 const HitRecord = struct {
     t: f32,
     point: Vec,
     normal: Vec, // assume normalized
+    color: RGB,
     // material: *const Sphere,
 };
 
@@ -188,16 +211,44 @@ const Image = struct {
     }
 };
 
+pub fn convert(comptime T: type, x: anytype) T {
+    const ret: T = @floatFromInt(x);
+    return ret;
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const alloc = gpa.allocator();
-    const img = try Image.initFill(alloc, RGB.white, 256, 256);
-    for (0..img.height) |y| {
-        for (0..img.width) |x| {
-            const fx: f32 = @floatFromInt(x);
-            const fy: f32 = @floatFromInt(y);
-            const fz: f32 = @floatFromInt(try std.math.mod(usize, x * y, 255));
-            img.at(x, y).* = RGB{ .r = fx / 255, .g = fy / 255, .b = fz / 255 };
+    const img = try Image.initFill(alloc, RGB.white, 16, 9);
+
+    const hittable = Sphere{
+        .center = Vec.fromArray(.{ 0, 0, 0 }),
+        .radius = 50,
+        .color = RGB.green,
+    };
+    const z_camera_origin = 10;
+    const z_image_plane = 5;
+    const ray_origin = Vec.fromArray(.{ 0, 0, z_camera_origin });
+    const dx: f32 = 0.1;
+    const dy: f32 = 0.1;
+    const x_min = -dx * convert(f32, img.width) / 2;
+    const y_min = -dy * convert(f32, img.height) / 2;
+    for (0..img.height) |iy| {
+        for (0..img.width) |ix| {
+            const x = x_min + convert(f32, ix) * dx;
+            const y = y_min + convert(f32, iy) * dy;
+
+            const ray = Ray{
+                .origin = ray_origin,
+                .velocity = Vec.fromArray(.{ x, y, z_image_plane - z_camera_origin }),
+            };
+            const hit = hittable.hit(ray, Interval{ .start = 0, .stop = std.math.inf(f32) }) orelse {
+                continue;
+            };
+            _ = hit;
+            unreachable;
+            // std.debug.print("{any}", .{hit});
+            // img.at(ix, iy).* = hit.color;
         }
     }
     try img.savePPM("test.ppm");
