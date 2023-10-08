@@ -195,7 +195,10 @@ const Image = struct {
     pub fn savePPM(self: Self, path: []const u8) !void {
         const file = try std.fs.cwd().createFile(path, .{});
         defer file.close();
-        const writer = file.writer();
+
+        var w = std.io.bufferedWriter(file.writer());
+        var writer = w.writer();
+
         try writer.print("P3\n", .{});
         try writer.print("{d} {d}\n", .{ self.width, self.height });
         try writer.print("255\n", .{}); // max color, do we want to adjust?
@@ -208,6 +211,7 @@ const Image = struct {
                 try writer.print("{d} {d} {d}\n", .{ r, g, b });
             }
         }
+        try w.flush();
     }
 };
 
@@ -238,6 +242,7 @@ pub fn main() !void {
     var i: usize = 0;
     const npixels = img.width * img.height;
     var next_progress_percent: f32 = 0;
+    const t_start_gen = std.time.nanoTimestamp();
     for (0..img.height) |iy| {
         for (0..img.width) |ix| {
             i += 1;
@@ -258,10 +263,16 @@ pub fn main() !void {
             img.at(ix, iy).* = hit.color;
         }
     }
-    std.debug.print("i = {d}\n", .{i});
-    std.debug.print("npixels = {d}\n", .{npixels});
-    std.debug.print("savePPM\n", .{});
+    const seconds_gen = convert(f64, std.time.nanoTimestamp() - t_start_gen) / 1e9;
+    std.debug.assert(i == npixels);
+    const t_start_save = std.time.nanoTimestamp();
     try img.savePPM("test.ppm");
+    const seconds_save = convert(f64, std.time.nanoTimestamp() - t_start_save) / 1e9;
+    std.debug.print(
+        \\ Done
+        \\ seconds generating image : {d}
+        \\ seconds saving ppm       : {d}
+    , .{ seconds_gen, seconds_save });
 }
 
 test {
