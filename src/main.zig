@@ -219,38 +219,48 @@ pub fn convert(comptime T: type, x: anytype) T {
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const alloc = gpa.allocator();
-    const img = try Image.initFill(alloc, RGB.white, 16, 9);
+    const img = try Image.initFill(alloc, RGB.white, 1600, 900);
+    const dx: f32 = 10 / convert(f32, img.width);
+    const dy: f32 = 10 / convert(f32, img.height);
 
     const hittable = Sphere{
         .center = Vec.fromArray(.{ 0, 0, 0 }),
-        .radius = 50,
+        .radius = 5,
         .color = RGB.green,
     };
     const z_camera_origin = 10;
     const z_image_plane = 5;
     const ray_origin = Vec.fromArray(.{ 0, 0, z_camera_origin });
-    const dx: f32 = 0.1;
-    const dy: f32 = 0.1;
     const x_min = -dx * convert(f32, img.width) / 2;
     const y_min = -dy * convert(f32, img.height) / 2;
+
+    // progress
+    var i: usize = 0;
+    const npixels = img.width * img.height;
+    var next_progress_percent: f32 = 0;
     for (0..img.height) |iy| {
         for (0..img.width) |ix| {
+            i += 1;
+            if ((100 * convert(f32, i) / convert(f32, npixels)) >= next_progress_percent) {
+                std.debug.print("Progress: {d}%\n", .{next_progress_percent});
+                next_progress_percent += 5;
+            }
             const x = x_min + convert(f32, ix) * dx;
             const y = y_min + convert(f32, iy) * dy;
 
             const ray = Ray{
                 .origin = ray_origin,
-                .velocity = Vec.fromArray(.{ x, y, z_image_plane - z_camera_origin }),
+                .velocity = Vec.fromXYZ(x, y, z_image_plane - z_camera_origin),
             };
             const hit = hittable.hit(ray, Interval{ .start = 0, .stop = std.math.inf(f32) }) orelse {
                 continue;
             };
-            _ = hit;
-            unreachable;
-            // std.debug.print("{any}", .{hit});
-            // img.at(ix, iy).* = hit.color;
+            img.at(ix, iy).* = hit.color;
         }
     }
+    std.debug.print("i = {d}\n", .{i});
+    std.debug.print("npixels = {d}\n", .{npixels});
+    std.debug.print("savePPM\n", .{});
     try img.savePPM("test.ppm");
 }
 
