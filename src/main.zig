@@ -1,13 +1,13 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const svecs = @import("svectors.zig");
-const Vec = svecs.Vec(3, f32);
+const Vec = svecs.Vec(3, f64);
 
 const Ray = struct {
     origin: Vec,
     velocity: Vec,
 
-    pub fn at(self: Ray, t: f32) Vec {
+    pub fn at(self: Ray, t: f64) Vec {
         return self.origin.add(self.velocity.scale(t));
     }
 };
@@ -19,7 +19,7 @@ const black = Vec.fromXYZ(0, 0, 0);
 const white = Vec.fromXYZ(1, 1, 1);
 const grey = Vec.fromXYZ(0.5, 0.5, 0.5);
 
-pub fn abc_formula(a: f32, b: f32, c: f32) ?[2]f32 {
+pub fn abc_formula(a: anytype, b: anytype, c: anytype) ?[2]@TypeOf(a, b, c) {
     if (a == 0) {
         // should we return a single solution?
         // should we error?
@@ -39,30 +39,43 @@ pub fn abc_formula(a: f32, b: f32, c: f32) ?[2]f32 {
     }
 }
 
+fn abc_formula64(a: f64, b: f64, c: f64) ?[2]f64 {
+    return abc_formula(a, b, c);
+}
+
+fn abc_formula32(a: f32, b: f32, c: f32) ?[2]f32 {
+    return abc_formula(a, b, c);
+}
+
 test "abc forumla" {
     const expectEqual = std.testing.expectEqual;
-    try expectEqual(abc_formula(1, 0, 0), .{ 0, 0 });
-    try expectEqual(abc_formula(0, 1, -1), null);
-    try expectEqual(abc_formula(1, 0, 1), null);
-    try expectEqual(abc_formula(1, 0, -1), .{ -1, 1 });
-    try expectEqual(abc_formula(1, 0, -1), .{ -1, 1 });
-    try expectEqual(abc_formula(1, -3, 2), .{ 1, 2 });
-    try expectEqual(abc_formula(2, -6, 4), .{ 1, 2 });
-    try expectEqual(abc_formula(-1, 3, -2), .{ 1, 2 });
+
+    try expectEqual(abc_formula64(1, 0, 0), .{ 0, 0 });
+    try expectEqual(abc_formula64(0, 1, -1), null);
+    try expectEqual(abc_formula64(1, 0, 1), null);
+    try expectEqual(abc_formula64(1, 0, -1), .{ -1, 1 });
+    try expectEqual(abc_formula64(1, 0, -1), .{ -1, 1 });
+    try expectEqual(abc_formula32(1, -3, 2), .{ 1, 2 });
+    try expectEqual(abc_formula32(2, -6, 4), .{ 1, 2 });
+    try expectEqual(abc_formula32(-1, 3, -2), .{ 1, 2 });
 }
 
 const Interval = struct {
     const Self = @This();
-    start: f32,
-    stop: f32,
-    pub fn contains(self: Self, x: f32) bool {
+    start: f64,
+    stop: f64,
+    pub fn contains(self: Self, x: f64) bool {
         return (self.start <= x) and (x <= self.stop);
+    }
+
+    pub fn clamp(self: Self, x: f64) f64 {
+        return std.math.clamp(x, self.start, self.stop);
     }
 };
 
 const Sphere = struct {
     center: Vec,
-    radius: f32,
+    radius: f64,
     color: Vec,
 
     pub fn hit(self: Sphere, ray: Ray, ts: Interval) ?HitRecord {
@@ -77,7 +90,7 @@ const Sphere = struct {
         }
         const t1 = res.?[0];
         const t2 = res.?[1];
-        var t = std.math.nan(f32);
+        var t = std.math.nan(f64);
         if (ts.contains(t1)) {
             t = t1;
         } else if (ts.contains(t2)) {
@@ -108,7 +121,7 @@ test "Sphere" {
         };
 
         const ray = Ray{ .origin = Vec.fromXYZ(0, 0, 10), .velocity = Vec.fromXYZ(0, 0, -5) };
-        const res = sphere.hit(ray, Interval{ .start = 0, .stop = std.math.inf(f32) });
+        const res = sphere.hit(ray, Interval{ .start = 0, .stop = std.math.inf(f64) });
         try expect(res != null);
         const hit = res.?;
         try expectEqualDeep(hit, HitRecord{
@@ -142,7 +155,7 @@ test "Sphere" {
 }
 
 const HitRecord = struct {
-    t: f32,
+    t: f64,
     point: Vec,
     normal: Vec, // assume normalized
     color: Vec,
@@ -209,11 +222,11 @@ const Image = struct {
         try w.flush();
     }
 
-    fn gammaCorrect(x: f32) f32 {
+    fn gammaCorrect(x: f64) f64 {
         return std.math.sqrt(x);
     }
 
-    fn ppmScalar(x: f32) u8 {
+    fn ppmScalar(x: f64) u8 {
         const g = gammaCorrect(x);
         const y: u8 = @intFromFloat(std.math.round(g * 255));
         return y;
@@ -223,11 +236,11 @@ const Image = struct {
 const RayTraceable = struct {
     const Self = @This();
     hittables: []const Sphere,
-    max_reflections: u32 = 4,
+    max_reflections: u32 = 1,
 
     fn calcFirstHit(self: RayTraceable, ray: Ray, ts: Interval) ?HitRecord {
-        var start: f32 = ts.start;
-        var stop: f32 = ts.stop;
+        var start: f64 = ts.start;
+        var stop: f64 = ts.stop;
         var maybe_hit: ?HitRecord = null;
         for (self.hittables) |*hittable| {
             if (hittable.hit(ray, .{ .start = start, .stop = stop })) |hit| {
@@ -244,18 +257,18 @@ const RayTraceable = struct {
         ray: Ray,
     ) Vec {
         var ret = Vec.fromXYZ(0, 0, 0);
-        var weight: f32 = 1.0;
+        var weight: f64 = 1.0;
         var r = ray;
         for (0..self.max_reflections) |i| {
             _ = i;
-            const start: f32 = 1e-3;
-            const stop: f32 = std.math.inf(f32);
+            const start: f64 = 1e-3;
+            const stop: f64 = std.math.inf(f64);
             const maybe_hit = self.calcFirstHit(r, .{ .start = start, .stop = stop });
             if (maybe_hit == null) {
                 ret = ret.add(backgroundColor(r).scale(weight));
             } else {
-                ret = ret.add((maybe_hit.?.color).scale(0.7 * weight));
-                weight *= 0.3;
+                ret = ret.add((maybe_hit.?.color).scale(1.0 * weight));
+                weight *= 0.0;
                 const new_direction = Self.randomOnHemisphere(rng, r.velocity);
                 const new_origin = maybe_hit.?.point;
                 r = Ray{ .origin = new_origin, .velocity = new_direction };
@@ -266,9 +279,9 @@ const RayTraceable = struct {
 
     fn randomOnHemisphere(rng: std.rand.Random, v: Vec) Vec {
         while (true) {
-            const x = rng.float(f32) * 2.0 - 1.0;
-            const y = rng.float(f32) * 2.0 - 1.0;
-            const z = rng.float(f32) * 2.0 - 1.0;
+            const x = rng.float(f64) * 2.0 - 1.0;
+            const y = rng.float(f64) * 2.0 - 1.0;
+            const z = rng.float(f64) * 2.0 - 1.0;
             const candidate = Vec.fromXYZ(x, y, z);
             if (v.inner(candidate) > 0) {
                 return candidate.normalize();
@@ -277,41 +290,40 @@ const RayTraceable = struct {
     }
 
     fn backgroundColor(ray: Ray) Vec {
-        const y = (ray.velocity.at(1) + 1.0) / 4;
-        return Vec.lerp(white, blue, std.math.clamp(1 * y, 0, 1));
+        const y = 0.5 * (ray.velocity.at(1) + 1.0);
+        return Vec.lerp(white, Vec.fromXYZ(0.5, 0.7, 1.0), y);
     }
 };
 
-pub fn convert(comptime T: type, x: anytype) T {
-    const ret: T = @floatFromInt(x);
+pub fn convert(comptime Target: type, x: anytype) Target {
+    const ret: Target = @floatFromInt(x);
     return ret;
 }
 
-pub fn uniform(comptime T: type, rng: std.rand.Random, min: T, max: T) T {
+pub fn uniform(comptime T: type, rng: std.rand.Random, min: anytype, max: anytype) T {
     return rng.float(T) * (max - min) + min;
 }
 
 pub fn main() !void {
-    const T = f32;
+    const T = f64;
     const t_start = std.time.nanoTimestamp();
     var prng = std.rand.DefaultPrng.init(42);
-    const rng = prng.random();
+    const rng: std.rand.Random = prng.random();
 
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const alloc = gpa.allocator();
     const img = try Image.initFill(alloc, white, 1600 / 2, 900 / 2);
-    const dy: T = 10 / convert(T, img.height);
-    const dx = dy;
+    const aspect_ratio = convert(T, img.width) / convert(T, img.height);
 
     const s1 = Sphere{
-        .center = Vec.fromArray(.{ 0, 0, 0 }),
-        .radius = 3,
-        .color = green,
+        .center = Vec.fromArray(.{ 0, 0, -1 }),
+        .radius = 0.5,
+        .color = red,
     };
 
     const s_big = Sphere{
-        .center = Vec.fromArray(.{ 0, 1000, 100 }),
-        .radius = 1000,
+        .center = Vec.fromArray(.{ 0, -1000, 100 }),
+        .radius = 10,
         .color = grey,
     };
 
@@ -320,46 +332,55 @@ pub fn main() !void {
     const traceable = RayTraceable{
         .hittables = hittables,
     };
-    const z_camera_origin = -10;
-    const z_image_plane = -5;
-    const ray_origin = Vec.fromArray(.{ 0, 0, z_camera_origin });
-    const x_min = -dx * convert(T, img.width) / 2;
-    const y_min = -dy * convert(T, img.height) / 2;
-    const x_max = x_min + dx * convert(T, img.width);
-    _ = x_max;
-    const y_max = y_min + dy * convert(T, img.height);
-    _ = y_max;
+    const camera_origin = Vec.fromXYZ(0, 0, 0);
+    const focal_length = 1;
+    const viewport_height = 2;
+    const viewport_width = viewport_height * aspect_ratio;
+    const viewport_u = Vec.fromXYZ(viewport_width, 0, 0);
+    const viewport_v = Vec.fromXYZ(0, -viewport_height, 0);
 
+    const pixel_delta_u = viewport_u.scale(1 / convert(T, img.width));
+    const pixel_delta_v = viewport_v.scale(1 / convert(T, img.height));
+
+    const viewport_upper_left = camera_origin
+        .add(Vec.fromXYZ(0, 0, -focal_length))
+        .add(viewport_u.scale(-0.5))
+        .add(viewport_v.scale(-0.5));
+
+    const pixel00_loc = viewport_upper_left
+        .add(pixel_delta_u.scale(0.5))
+        .add(pixel_delta_v.scale(0.5));
     // progress
     var i: usize = 0;
     const npixels = img.width * img.height;
     var next_progress_percent: T = 0;
     const t_start_gen = std.time.nanoTimestamp();
     const nsamples = 10;
-    for (0..img.height) |iy| {
-        for (0..img.width) |ix| {
+    for (0..img.height) |iv| {
+        for (0..img.width) |iu| {
             i += 1;
             if ((100 * convert(T, i) / convert(T, npixels)) >= next_progress_percent) {
                 std.debug.print("Progress: {d}%\n", .{next_progress_percent});
                 next_progress_percent += 5;
             }
 
+            const pixel_center = pixel00_loc
+                .add(pixel_delta_u.scale(convert(T, iu)))
+                .add(pixel_delta_v.scale(convert(T, iv)));
+
             var color = Vec.fill(0);
             for (0..nsamples) |_| {
-                const x_lo = x_min + convert(T, ix) * dx;
-                const y_lo = y_min + convert(T, iy) * dy;
-                const x_hi = x_lo + dx;
-                const y_hi = y_lo + dy;
-                const x = uniform(T, rng, x_lo, x_hi);
-                const y = uniform(T, rng, y_lo, y_hi);
+                const pixel_sample = pixel_center
+                    .add(pixel_delta_u.scale(uniform(T, rng, -0.5, 0.5)))
+                    .add(pixel_delta_v.scale(uniform(T, rng, -0.5, 0.5)));
                 const ray = Ray{
-                    .origin = ray_origin,
-                    .velocity = Vec.fromXYZ(x, y, z_image_plane - z_camera_origin),
+                    .origin = camera_origin,
+                    .velocity = pixel_sample.subtract(camera_origin).normalize(),
                 };
                 const hit_color = traceable.rayColor(rng, ray);
                 color = color.add(hit_color);
             }
-            img.at(ix, iy).* = color.scale(convert(T, 1) / nsamples);
+            img.at(iu, iv).* = color.scale(convert(T, 1) / nsamples);
         }
     }
     const seconds_gen = convert(f64, std.time.nanoTimestamp() - t_start_gen) / 1e9;

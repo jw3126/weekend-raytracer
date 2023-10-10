@@ -166,7 +166,7 @@ pub fn Vec(comptime len: comptime_int, comptime T: type) type {
             };
         }
 
-        pub fn lerp(self: Self, other: Self, t: f32) Self {
+        pub fn lerp(self: Self, other: Self, t: T) Self {
             return self.scale(1 - t).add(other.scale(t));
         }
     };
