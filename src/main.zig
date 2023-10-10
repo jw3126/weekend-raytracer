@@ -18,6 +18,7 @@ const red = Vec.fromXYZ(1, 0, 0);
 const black = Vec.fromXYZ(0, 0, 0);
 const white = Vec.fromXYZ(1, 1, 1);
 const grey = Vec.fromXYZ(0.5, 0.5, 0.5);
+const dark_grey = Vec.fromXYZ(0.1, 0.1, 0.1);
 
 pub fn abc_formula(a: anytype, b: anytype, c: anytype) ?[2]@TypeOf(a, b, c) {
     if (a == 0) {
@@ -236,7 +237,7 @@ const Image = struct {
 const RayTraceable = struct {
     const Self = @This();
     hittables: []const Sphere,
-    max_reflections: u32 = 1,
+    max_reflections: u32 = 10,
 
     fn calcFirstHit(self: RayTraceable, ray: Ray, ts: Interval) ?HitRecord {
         var start: f64 = ts.start;
@@ -259,17 +260,17 @@ const RayTraceable = struct {
         var ret = Vec.fromXYZ(0, 0, 0);
         var weight: f64 = 1.0;
         var r = ray;
-        for (0..self.max_reflections) |i| {
-            _ = i;
+        for (0..self.max_reflections) |_| {
             const start: f64 = 1e-3;
             const stop: f64 = std.math.inf(f64);
             const maybe_hit = self.calcFirstHit(r, .{ .start = start, .stop = stop });
             if (maybe_hit == null) {
                 ret = ret.add(backgroundColor(r).scale(weight));
+                break;
             } else {
-                ret = ret.add((maybe_hit.?.color).scale(1.0 * weight));
-                weight *= 0.0;
-                const new_direction = Self.randomOnHemisphere(rng, r.velocity);
+                ret = ret.add((maybe_hit.?.color).scale(0.5 * weight));
+                weight *= 0.5;
+                const new_direction = randLambertian(rng, r.velocity);
                 const new_origin = maybe_hit.?.point;
                 r = Ray{ .origin = new_origin, .velocity = new_direction };
             }
@@ -277,23 +278,44 @@ const RayTraceable = struct {
         return ret;
     }
 
-    fn randomOnHemisphere(rng: std.rand.Random, v: Vec) Vec {
-        while (true) {
-            const x = rng.float(f64) * 2.0 - 1.0;
-            const y = rng.float(f64) * 2.0 - 1.0;
-            const z = rng.float(f64) * 2.0 - 1.0;
-            const candidate = Vec.fromXYZ(x, y, z);
-            if (v.inner(candidate) > 0) {
-                return candidate.normalize();
-            }
-        }
-    }
-
     fn backgroundColor(ray: Ray) Vec {
         const y = 0.5 * (ray.velocity.at(1) + 1.0);
         return Vec.lerp(white, Vec.fromXYZ(0.5, 0.7, 1.0), y);
     }
 };
+
+fn randInSphere(rng: std.rand.Random) Vec {
+    while (true) {
+        const x = rng.float(f64) * 2.0 - 1.0;
+        const y = rng.float(f64) * 2.0 - 1.0;
+        const z = rng.float(f64) * 2.0 - 1.0;
+        const candidate = Vec.fromXYZ(x, y, z);
+        if (candidate.abs2() < 1.0) {
+            return candidate;
+        }
+    }
+}
+
+fn randOnHemisphere(rng: std.rand.Random, v: Vec) Vec {
+    while (true) {
+        const candidate = randInSphere(rng);
+        if (v.inner(candidate) > 0) {
+            return candidate.normalize();
+        }
+    }
+}
+
+fn randLambertian(rng: std.rand.Random, v: Vec) Vec {
+    const candidate = v.add(randOnSphere(rng));
+    // very unlikely that candidate is (0,0,0)
+    return candidate.normalize();
+}
+
+fn randOnSphere(rng: std.rand.Random) Vec {
+    // the probablility that candidate is (0,0,0)
+    // is negligible even for f32
+    return randInSphere(rng).normalize();
+}
 
 pub fn convert(comptime Target: type, x: anytype) Target {
     const ret: Target = @floatFromInt(x);
@@ -316,15 +338,15 @@ pub fn main() !void {
     const aspect_ratio = convert(T, img.width) / convert(T, img.height);
 
     const s1 = Sphere{
-        .center = Vec.fromArray(.{ 0, 0, -1 }),
+        .center = Vec.fromXYZ(0, 0, -1),
         .radius = 0.5,
-        .color = red,
+        .color = dark_grey,
     };
 
     const s_big = Sphere{
-        .center = Vec.fromArray(.{ 0, -1000, 100 }),
-        .radius = 10,
-        .color = grey,
+        .center = Vec.fromXYZ(0, -100.5, -1),
+        .radius = 100,
+        .color = dark_grey,
     };
 
     const hittables: []const Sphere = &[_]Sphere{ s1, s_big };
