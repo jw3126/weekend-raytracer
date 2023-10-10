@@ -12,6 +12,13 @@ const Ray = struct {
     }
 };
 
+const green = Vec.fromXYZ(0, 1, 0);
+const blue = Vec.fromXYZ(0, 0, 1);
+const red = Vec.fromXYZ(1, 0, 0);
+const black = Vec.fromXYZ(0, 0, 0);
+const white = Vec.fromXYZ(1, 1, 1);
+const grey = Vec.fromXYZ(0.5, 0.5, 0.5);
+
 pub fn abc_formula(a: f32, b: f32, c: f32) ?[2]f32 {
     if (a == 0) {
         // should we return a single solution?
@@ -56,7 +63,7 @@ const Interval = struct {
 const Sphere = struct {
     center: Vec,
     radius: f32,
-    color: RGB,
+    color: Vec,
 
     pub fn hit(self: Sphere, ray: Ray, ts: Interval) ?HitRecord {
         const oc = ray.origin.subtract(self.center);
@@ -97,7 +104,7 @@ test "Sphere" {
         const sphere = Sphere{
             .center = Vec.fromXYZ(0, 0, 0),
             .radius = 50,
-            .color = RGB.blue,
+            .color = blue,
         };
 
         const ray = Ray{ .origin = Vec.fromXYZ(0, 0, 10), .velocity = Vec.fromXYZ(0, 0, -5) };
@@ -108,14 +115,14 @@ test "Sphere" {
             .t = 12,
             .point = Vec.fromXYZ(0, 0, -50),
             .normal = Vec.fromXYZ(0, 0, -1),
-            .color = RGB.blue,
+            .color = blue,
         });
     }
     {
         const sphere = Sphere{
             .center = Vec.fromArray(.{ 0, 0, 0 }),
             .radius = 1,
-            .color = RGB.red,
+            .color = red,
         };
         const ray = Ray{
             .origin = Vec.fromArray(.{ 0, 0, 10 }),
@@ -129,7 +136,7 @@ test "Sphere" {
             .t = 9,
             .point = Vec.fromArray(.{ 0, 0, 1 }),
             .normal = Vec.fromArray(.{ 0, 0, 1 }),
-            .color = RGB.red,
+            .color = red,
         });
     }
 }
@@ -138,31 +145,19 @@ const HitRecord = struct {
     t: f32,
     point: Vec,
     normal: Vec, // assume normalized
-    color: RGB,
+    color: Vec,
     // material: *const Sphere,
-};
-
-const RGB = struct {
-    const Self = @This();
-    r: f32,
-    g: f32,
-    b: f32,
-    const green = Self{ .r = 0, .g = 1, .b = 0 };
-    const blue = Self{ .r = 0, .g = 0, .b = 1 };
-    const red = Self{ .r = 1, .g = 0, .b = 0 };
-    const black = Self{ .r = 0, .g = 0, .b = 0 };
-    const white = Self{ .r = 1, .g = 1, .b = 1 };
 };
 
 const Image = struct {
     const Self = @This();
     width: usize,
     height: usize,
-    pixelValues: []RGB, // SOA?
+    pixelValues: []Vec, // SOA?
     alloc: Allocator,
 
-    pub fn initFill(alloc: Allocator, color: RGB, width: usize, height: usize) !Self {
-        var pixelValues = try alloc.alloc(RGB, width * height);
+    pub fn initFill(alloc: Allocator, color: Vec, width: usize, height: usize) !Self {
+        var pixelValues = try alloc.alloc(Vec, width * height);
         for (pixelValues) |*p| {
             p.* = color;
         }
@@ -174,12 +169,12 @@ const Image = struct {
         };
     }
 
-    pub fn at(self: Self, x: usize, y: usize) *RGB {
+    pub fn at(self: Self, x: usize, y: usize) *Vec {
         const i = self.toLinearIndex(x, y);
         return &self.pixelValues[i];
     }
 
-    pub fn setAt(self: *Self, x: usize, y: usize, color: RGB) void {
+    pub fn setAt(self: *Self, x: usize, y: usize, color: Vec) void {
         const i = self.toLinearIndex(x, y);
         self.pixelValues[i] = color;
     }
@@ -205,13 +200,85 @@ const Image = struct {
         for (0..self.height) |iy| {
             for (0..self.width) |ix| {
                 const color = self.at(ix, iy);
-                const r: u8 = @intFromFloat(std.math.round(color.r * 255));
-                const g: u8 = @intFromFloat(std.math.round(color.g * 255));
-                const b: u8 = @intFromFloat(std.math.round(color.b * 255));
+                const r: u8 = Self.ppmScalar(color.at(0));
+                const g: u8 = Self.ppmScalar(color.at(1));
+                const b: u8 = Self.ppmScalar(color.at(2));
                 try writer.print("{d} {d} {d}\n", .{ r, g, b });
             }
         }
         try w.flush();
+    }
+
+    fn gammaCorrect(x: f32) f32 {
+        return std.math.sqrt(x);
+    }
+
+    fn ppmScalar(x: f32) u8 {
+        const g = gammaCorrect(x);
+        const y: u8 = @intFromFloat(std.math.round(g * 255));
+        return y;
+    }
+};
+
+const RayTraceable = struct {
+    const Self = @This();
+    hittables: []const Sphere,
+    max_reflections: u32 = 4,
+
+    fn calcFirstHit(self: RayTraceable, ray: Ray, ts: Interval) ?HitRecord {
+        var start: f32 = ts.start;
+        var stop: f32 = ts.stop;
+        var maybe_hit: ?HitRecord = null;
+        for (self.hittables) |*hittable| {
+            if (hittable.hit(ray, .{ .start = start, .stop = stop })) |hit| {
+                stop = hit.t;
+                maybe_hit = hit;
+            }
+        }
+        return maybe_hit;
+    }
+
+    fn rayColor(
+        self: RayTraceable,
+        rng: std.rand.Random,
+        ray: Ray,
+    ) Vec {
+        var ret = Vec.fromXYZ(0, 0, 0);
+        var weight: f32 = 1.0;
+        var r = ray;
+        for (0..self.max_reflections) |i| {
+            _ = i;
+            const start: f32 = 1e-3;
+            const stop: f32 = std.math.inf(f32);
+            const maybe_hit = self.calcFirstHit(r, .{ .start = start, .stop = stop });
+            if (maybe_hit == null) {
+                ret = ret.add(backgroundColor(r).scale(weight));
+            } else {
+                ret = ret.add((maybe_hit.?.color).scale(0.7 * weight));
+                weight *= 0.3;
+                const new_direction = Self.randomOnHemisphere(rng, r.velocity);
+                const new_origin = maybe_hit.?.point;
+                r = Ray{ .origin = new_origin, .velocity = new_direction };
+            }
+        }
+        return ret;
+    }
+
+    fn randomOnHemisphere(rng: std.rand.Random, v: Vec) Vec {
+        while (true) {
+            const x = rng.float(f32) * 2.0 - 1.0;
+            const y = rng.float(f32) * 2.0 - 1.0;
+            const z = rng.float(f32) * 2.0 - 1.0;
+            const candidate = Vec.fromXYZ(x, y, z);
+            if (v.inner(candidate) > 0) {
+                return candidate.normalize();
+            }
+        }
+    }
+
+    fn backgroundColor(ray: Ray) Vec {
+        const y = (ray.velocity.at(1) + 1.0) / 4;
+        return Vec.lerp(white, blue, std.math.clamp(1 * y, 0, 1));
     }
 };
 
@@ -220,47 +287,79 @@ pub fn convert(comptime T: type, x: anytype) T {
     return ret;
 }
 
+pub fn uniform(comptime T: type, rng: std.rand.Random, min: T, max: T) T {
+    return rng.float(T) * (max - min) + min;
+}
+
 pub fn main() !void {
+    const T = f32;
+    const t_start = std.time.nanoTimestamp();
+    var prng = std.rand.DefaultPrng.init(42);
+    const rng = prng.random();
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const alloc = gpa.allocator();
-    const img = try Image.initFill(alloc, RGB.white, 1600, 900);
-    const dx: f32 = 10 / convert(f32, img.width);
-    const dy: f32 = 10 / convert(f32, img.height);
+    const img = try Image.initFill(alloc, white, 1600 / 2, 900 / 2);
+    const dy: T = 10 / convert(T, img.height);
+    const dx = dy;
 
-    const hittable = Sphere{
+    const s1 = Sphere{
         .center = Vec.fromArray(.{ 0, 0, 0 }),
-        .radius = 5,
-        .color = RGB.green,
+        .radius = 3,
+        .color = green,
     };
-    const z_camera_origin = 10;
-    const z_image_plane = 5;
+
+    const s_big = Sphere{
+        .center = Vec.fromArray(.{ 0, 1000, 100 }),
+        .radius = 1000,
+        .color = grey,
+    };
+
+    const hittables: []const Sphere = &[_]Sphere{ s1, s_big };
+
+    const traceable = RayTraceable{
+        .hittables = hittables,
+    };
+    const z_camera_origin = -10;
+    const z_image_plane = -5;
     const ray_origin = Vec.fromArray(.{ 0, 0, z_camera_origin });
-    const x_min = -dx * convert(f32, img.width) / 2;
-    const y_min = -dy * convert(f32, img.height) / 2;
+    const x_min = -dx * convert(T, img.width) / 2;
+    const y_min = -dy * convert(T, img.height) / 2;
+    const x_max = x_min + dx * convert(T, img.width);
+    _ = x_max;
+    const y_max = y_min + dy * convert(T, img.height);
+    _ = y_max;
 
     // progress
     var i: usize = 0;
     const npixels = img.width * img.height;
-    var next_progress_percent: f32 = 0;
+    var next_progress_percent: T = 0;
     const t_start_gen = std.time.nanoTimestamp();
+    const nsamples = 10;
     for (0..img.height) |iy| {
         for (0..img.width) |ix| {
             i += 1;
-            if ((100 * convert(f32, i) / convert(f32, npixels)) >= next_progress_percent) {
+            if ((100 * convert(T, i) / convert(T, npixels)) >= next_progress_percent) {
                 std.debug.print("Progress: {d}%\n", .{next_progress_percent});
                 next_progress_percent += 5;
             }
-            const x = x_min + convert(f32, ix) * dx;
-            const y = y_min + convert(f32, iy) * dy;
 
-            const ray = Ray{
-                .origin = ray_origin,
-                .velocity = Vec.fromXYZ(x, y, z_image_plane - z_camera_origin),
-            };
-            const hit = hittable.hit(ray, Interval{ .start = 0, .stop = std.math.inf(f32) }) orelse {
-                continue;
-            };
-            img.at(ix, iy).* = hit.color;
+            var color = Vec.fill(0);
+            for (0..nsamples) |_| {
+                const x_lo = x_min + convert(T, ix) * dx;
+                const y_lo = y_min + convert(T, iy) * dy;
+                const x_hi = x_lo + dx;
+                const y_hi = y_lo + dy;
+                const x = uniform(T, rng, x_lo, x_hi);
+                const y = uniform(T, rng, y_lo, y_hi);
+                const ray = Ray{
+                    .origin = ray_origin,
+                    .velocity = Vec.fromXYZ(x, y, z_image_plane - z_camera_origin),
+                };
+                const hit_color = traceable.rayColor(rng, ray);
+                color = color.add(hit_color);
+            }
+            img.at(ix, iy).* = color.scale(convert(T, 1) / nsamples);
         }
     }
     const seconds_gen = convert(f64, std.time.nanoTimestamp() - t_start_gen) / 1e9;
@@ -268,11 +367,13 @@ pub fn main() !void {
     const t_start_save = std.time.nanoTimestamp();
     try img.savePPM("test.ppm");
     const seconds_save = convert(f64, std.time.nanoTimestamp() - t_start_save) / 1e9;
+    const seconds_total = convert(f64, std.time.nanoTimestamp() - t_start) / 1e9;
     std.debug.print(
         \\ Done
         \\ seconds generating image : {d}
         \\ seconds saving ppm       : {d}
-    , .{ seconds_gen, seconds_save });
+        \\ seconds total            : {d}
+    , .{ seconds_gen, seconds_save, seconds_total });
 }
 
 test {
