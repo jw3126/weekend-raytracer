@@ -86,6 +86,14 @@ pub fn Vec(comptime len: comptime_int, comptime T: type) type {
             return self.map2(other, add_scalar);
         }
 
+        fn mul_scalar(x: T, y: T) T {
+            return x * y;
+        }
+
+        pub fn pointwiseMul(self: Self, other: Self) Self {
+            return self.map2(other, mul_scalar);
+        }
+
         pub fn subtract(self: Self, other: Self) Self {
             return self.map2(other, sub_scalar);
         }

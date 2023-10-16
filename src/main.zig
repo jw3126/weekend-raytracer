@@ -74,10 +74,68 @@ const Interval = struct {
     }
 };
 
+const ScatterResult = struct {
+    const Self = @This();
+    ray: Ray,
+    attenuation: Vec,
+};
+
+const Material = union(enum) {
+    CaseLambertian: Lambertian,
+    CaseMetal: Metal,
+
+    fn scatter(self: Material, rng: std.rand.Random, ray: Ray, hit: HitRecord) ScatterResult {
+        return switch (self) {
+            .CaseLambertian => |obj| obj.scatter(rng, ray, hit),
+            .CaseMetal => |obj| obj.scatter(rng, ray, hit),
+        };
+    }
+};
+
+const Lambertian = struct {
+    albedo: Vec, // a color
+    fn randLambertian(rng: std.rand.Random, v: Vec) Vec {
+        const candidate = v.add(randOnSphere(rng));
+        // very unlikely that candidate is (0,0,0)
+        return candidate.normalize();
+    }
+
+    pub fn scatter(self: Lambertian, rng: std.rand.Random, ray: Ray, hit: HitRecord) ScatterResult {
+        const new_direction = randLambertian(rng, ray.velocity);
+        const new_origin = hit.point;
+        return ScatterResult{
+            .ray = Ray{ .origin = new_origin, .velocity = new_direction },
+            .attenuation = self.albedo,
+        };
+    }
+
+    pub fn material(self: Lambertian) Material {
+        return Material{ .CaseLambertian = self };
+    }
+};
+
+const Metal = struct {
+    albedo: Vec,
+    pub fn scatter(self: Metal, rng: std.rand.Random, ray: Ray, hit: HitRecord) ScatterResult {
+        _ = rng;
+        const v = ray.velocity;
+        const n = hit.normal;
+        const new_direction = v.subtract(n.scale(2 * v.inner(n)));
+        const r = Ray{ .origin = hit.point, .velocity = new_direction };
+        return ScatterResult{
+            .ray = r,
+            .attenuation = self.albedo,
+        };
+    }
+    pub fn material(self: Metal) Material {
+        return Material{ .CaseMetal = self };
+    }
+};
+
 const Sphere = struct {
     center: Vec,
     radius: f64,
-    color: Vec,
+    material: Material,
 
     pub fn hit(self: Sphere, ray: Ray, ts: Interval) ?HitRecord {
         const oc = ray.origin.subtract(self.center);
@@ -105,7 +163,7 @@ const Sphere = struct {
             .t = t,
             .point = point,
             .normal = normal,
-            .color = self.color,
+            .material = self.material,
         };
     }
 };
@@ -118,7 +176,7 @@ test "Sphere" {
         const sphere = Sphere{
             .center = Vec.fromXYZ(0, 0, 0),
             .radius = 50,
-            .color = blue,
+            .material = (Lambertian{ .albedo = blue }).material(),
         };
 
         const ray = Ray{ .origin = Vec.fromXYZ(0, 0, 10), .velocity = Vec.fromXYZ(0, 0, -5) };
@@ -129,14 +187,14 @@ test "Sphere" {
             .t = 12,
             .point = Vec.fromXYZ(0, 0, -50),
             .normal = Vec.fromXYZ(0, 0, -1),
-            .color = blue,
+            .material = (Lambertian{ .albedo = blue }).material(),
         });
     }
     {
         const sphere = Sphere{
             .center = Vec.fromArray(.{ 0, 0, 0 }),
             .radius = 1,
-            .color = red,
+            .material = (Lambertian{ .albedo = red }).material(),
         };
         const ray = Ray{
             .origin = Vec.fromArray(.{ 0, 0, 10 }),
@@ -150,7 +208,7 @@ test "Sphere" {
             .t = 9,
             .point = Vec.fromArray(.{ 0, 0, 1 }),
             .normal = Vec.fromArray(.{ 0, 0, 1 }),
-            .color = red,
+            .material = (Lambertian{ .albedo = red }).material(),
         });
     }
 }
@@ -159,8 +217,7 @@ const HitRecord = struct {
     t: f64,
     point: Vec,
     normal: Vec, // assume normalized
-    color: Vec,
-    // material: *const Sphere,
+    material: Material,
 };
 
 const Image = struct {
@@ -237,7 +294,7 @@ const Image = struct {
 const RayTraceable = struct {
     const Self = @This();
     hittables: []const Sphere,
-    max_reflections: u32 = 10,
+    max_depth: u32 = 10,
 
     fn calcFirstHit(self: RayTraceable, ray: Ray, ts: Interval) ?HitRecord {
         var start: f64 = ts.start;
@@ -257,25 +314,28 @@ const RayTraceable = struct {
         rng: std.rand.Random,
         ray: Ray,
     ) Vec {
-        var ret = Vec.fromXYZ(0, 0, 0);
-        var weight: f64 = 1.0;
-        var r = ray;
-        for (0..self.max_reflections) |_| {
-            const start: f64 = 1e-3;
-            const stop: f64 = std.math.inf(f64);
-            const maybe_hit = self.calcFirstHit(r, .{ .start = start, .stop = stop });
-            if (maybe_hit == null) {
-                ret = ret.add(backgroundColor(r).scale(weight));
-                break;
-            } else {
-                ret = ret.add((maybe_hit.?.color).scale(0.5 * weight));
-                weight *= 0.5;
-                const new_direction = randLambertian(rng, r.velocity);
-                const new_origin = maybe_hit.?.point;
-                r = Ray{ .origin = new_origin, .velocity = new_direction };
-            }
+        return self.rayColorRec(rng, ray, self.max_depth);
+    }
+
+    fn rayColorRec(
+        self: RayTraceable,
+        rng: std.rand.Random,
+        ray: Ray,
+        max_depth: u32,
+    ) Vec {
+        if (max_depth == 0) {
+            return Vec.fromXYZ(0, 0, 0);
         }
-        return ret;
+        const start: f64 = 1e-3;
+        const stop: f64 = std.math.inf(f64);
+        const maybe_hit = self.calcFirstHit(ray, .{ .start = start, .stop = stop });
+        if (maybe_hit == null) {
+            return backgroundColor(ray);
+        } else {
+            const hit = maybe_hit.?;
+            const s = hit.material.scatter(rng, ray, hit);
+            return s.attenuation.pointwiseMul(self.rayColorRec(rng, s.ray, max_depth - 1));
+        }
     }
 
     fn backgroundColor(ray: Ray) Vec {
@@ -305,12 +365,6 @@ fn randOnHemisphere(rng: std.rand.Random, v: Vec) Vec {
     }
 }
 
-fn randLambertian(rng: std.rand.Random, v: Vec) Vec {
-    const candidate = v.add(randOnSphere(rng));
-    // very unlikely that candidate is (0,0,0)
-    return candidate.normalize();
-}
-
 fn randOnSphere(rng: std.rand.Random) Vec {
     // the probablility that candidate is (0,0,0)
     // is negligible even for f32
@@ -338,23 +392,35 @@ pub fn main() !void {
     const aspect_ratio = convert(T, img.width) / convert(T, img.height);
 
     const s1 = Sphere{
+        .center = Vec.fromXYZ(-1, 0, -1),
+        .radius = 0.4,
+        .material = (Metal{ .albedo = red }).material(),
+    };
+
+    const s2 = Sphere{
         .center = Vec.fromXYZ(0, 0, -1),
-        .radius = 0.5,
-        .color = dark_grey,
+        .radius = 0.4,
+        .material = (Lambertian{ .albedo = dark_grey }).material(),
+    };
+
+    const s3 = Sphere{
+        .center = Vec.fromXYZ(1, 0, -1),
+        .radius = 0.4,
+        .material = (Metal{ .albedo = blue }).material(),
     };
 
     const s_big = Sphere{
-        .center = Vec.fromXYZ(0, -100.5, -1),
+        .center = Vec.fromXYZ(0, -100.4, -1),
         .radius = 100,
-        .color = dark_grey,
+        .material = (Lambertian{ .albedo = dark_grey }).material(),
     };
 
-    const hittables: []const Sphere = &[_]Sphere{ s1, s_big };
+    const hittables: []const Sphere = &[_]Sphere{ s1, s2, s3, s_big };
 
     const traceable = RayTraceable{
         .hittables = hittables,
     };
-    const camera_origin = Vec.fromXYZ(0, 0, 0);
+    const camera_origin = Vec.fromXYZ(0, 0, 1);
     const focal_length = 1;
     const viewport_height = 2;
     const viewport_width = viewport_height * aspect_ratio;
